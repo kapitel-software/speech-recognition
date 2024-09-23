@@ -79,18 +79,19 @@ public class SpeechRecognition: CAPPlugin {
             let fileName = "recordedAudio-\(UUID().uuidString).caf"
             self.audioFileURL = documentsPath.appendingPathComponent(fileName)
 
-            do {
-                self.audioFile = try AVAudioFile(forWriting: self.audioFileURL!, settings: format.settings)
-            } catch {
-                call.reject("Failed to create audio file: \(error.localizedDescription)")
-                return
-            }
 
             self.recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
             self.recognitionRequest?.shouldReportPartialResults = partialResults
 
             let inputNode: AVAudioInputNode = self.audioEngine!.inputNode
             let format: AVAudioFormat = inputNode.outputFormat(forBus: 0)
+
+            do {
+                self.audioFile = try AVAudioFile(forWriting: self.audioFileURL!, settings: format.settings)
+            } catch {
+                call.reject("Failed to create audio file: \(error.localizedDescription)")
+                return
+            }
 
             self.recognitionTask = self.speechRecognizer?.recognitionTask(with: self.recognitionRequest!, resultHandler: { (result, error) in
                 if result != nil {
