@@ -19,6 +19,9 @@ public class SpeechRecognition: CAPPlugin {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
 
+    private var audioFile: AVAudioFile?
+    private var audioFileURL: URL?
+
     @objc func available(_ call: CAPPluginCall) {
         guard let recognizer = SFSpeechRecognizer() else {
             call.resolve([
@@ -72,6 +75,17 @@ public class SpeechRecognition: CAPPlugin {
 
             }
 
+            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let fileName = "recordedAudio-\(UUID().uuidString).caf"
+            self.audioFileURL = documentsPath.appendingPathComponent(fileName)
+
+            do {
+                self.audioFile = try AVAudioFile(forWriting: self.audioFileURL!, settings: format.settings)
+            } catch {
+                call.reject("Failed to create audio file: \(error.localizedDescription)")
+                return
+            }
+
             self.recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
             self.recognitionRequest?.shouldReportPartialResults = partialResults
 
@@ -104,6 +118,17 @@ public class SpeechRecognition: CAPPlugin {
                         self.notifyListeners("listeningState", data: ["status": "stopped"])
                         self.recognitionTask = nil
                         self.recognitionRequest = nil
+
+                        // Read the audio file and encode it as base64
+                        var audioDataBase64: String? = nil
+                        if let audioFileURL = self.audioFileURL {
+                            audioDataBase64 = self.readFileAsBase64(audioFileURL)
+                        }
+
+                        call.resolve([
+                            "matches": resultArray,
+                            "audioData": audioDataBase64 ?? ""
+                        ])
                     }
                 }
 
@@ -117,8 +142,14 @@ public class SpeechRecognition: CAPPlugin {
                 }
             })
 
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { (buffer: AVAudioPCMBuffer, _: AVAudioTime) in
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { (buffer: AVAudioPCMBuffer, when: AVAudioTime) in
                 self.recognitionRequest?.append(buffer)
+
+                do {
+                    try self.audioFile?.write(from: buffer)
+                } catch {
+                    print("Error writing audio buffer to file: \(error.localizedDescription)")
+                }
             }
 
             self.audioEngine?.prepare()
@@ -138,10 +169,22 @@ public class SpeechRecognition: CAPPlugin {
         DispatchQueue.global(qos: DispatchQoS.QoSClass.default).async {
             if let engine = self.audioEngine, engine.isRunning {
                 engine.stop()
+                self.audioEngine?.inputNode.removeTap(onBus: 0)
                 self.recognitionRequest?.endAudio()
                 self.notifyListeners("listeningState", data: ["status": "stopped"])
             }
-            call.resolve()
+
+            // Close the audio file
+            self.audioFile = nil
+
+            // Read the audio file and encode it as base64
+            var audioDataBase64: String? = nil
+            if let audioFileURL = self.audioFileURL {
+                audioDataBase64 = self.readFileAsBase64(audioFileURL)
+            }
+
+            // Return the base64 audio data
+            call.resolve(["audioData": audioDataBase64 ?? ""])
         }
     }
 
@@ -201,6 +244,16 @@ public class SpeechRecognition: CAPPlugin {
                     self.checkPermissions(call)
                 }
             }
+        }
+    }
+
+    private func readFileAsBase64(_ fileURL: URL) -> String? {
+        do {
+            let audioData = try Data(contentsOf: fileURL)
+            return audioData.base64EncodedString()
+        } catch {
+            print("Error reading audio file: \(error.localizedDescription)")
+            return nil
         }
     }
 }
